@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MathVision Solver</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="page">
+    <section class="card glass">
+      <h1>MathVision Solver</h1>
+      <p class="muted">Upload a photo of a mathematical equation (handwritten or printed). Enter your name — it will be saved with the result.</p>
+
+      <form id="uploadForm">
+        <label class="field">
+          <span>Your name <span class="required">*</span></span>
+          <input id="name" name="name" required placeholder="Enter your name" />
+        </label>
+
+        <label class="field">
+          <span>Select image <span class="required">*</span></span>
+          <input type="file" id="image" name="image" accept="image/*" required />
+        </label>
+
+        <div class="controls">
+          <button type="submit" id="submitBtn">Upload & Solve</button>
+          <button type="button" id="historyBtn">Show History</button>
+        </div>
+      </form>
+
+      <div id="status" class="status"></div>
+      <div id="result" class="result"></div>
+      <div id="history" class="history"></div>
+    </section>
+  </main>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>
