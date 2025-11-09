@@ -1,7 +1,8 @@
-# app.py — REST-based Gemini calls + fallback OCR+SymPy (complete file)
+# app.py — Fixed: Gemini URL normalization + improved OCR->SymPy preprocessing
 import os
 import io
 import json
+import re
 import base64
 import shutil
 import subprocess
@@ -32,8 +33,10 @@ MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")            # required to use Gemini REST
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-mini")  # set to an available model ID
-GEMINI_ENDPOINT_BASE = os.getenv("GEMINI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta2")
+# If you previously put "models/gemini-1.5-mini", change it to "gemini-1.5-mini" in .env.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-mini")
+# normalize endpoint: avoid trailing slash problems
+GEMINI_ENDPOINT_BASE = os.getenv("GEMINI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta2").rstrip("/")
 PORT = int(os.getenv("PORT", 5000))
 
 # -------------------------
@@ -144,55 +147,99 @@ def preprocess_image_for_ocr(pil_img, resize_scale=2, median_filter=3, autocontr
     return img
 
 # -------------------------
-# Gemini REST: list models helper
+# New: Preprocess OCR text for SymPy (insert * where implicit, clean unicode)
 # -------------------------
-def rest_list_models():
-    if not GEMINI_API_KEY:
-        return {"error": "GEMINI_API_KEY not set"}
-    url = f"{GEMINI_ENDPOINT_BASE}/models"
-    headers = {"Authorization": f"Bearer {GEMINI_API_KEY}"}
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        return {"error": str(e), "status_code": getattr(e.response, "status_code", None)}
+def preprocess_text_for_sympy(s: str) -> str:
+    """
+    Clean OCR text so SymPy can parse it more reliably.
+    - Replace Unicode minus, multiply signs, caret -> **, commas
+    - Insert explicit multiplication between digit-letter and letter-digit
+    - Insert multiplication between adjacent letters except common function names
+    """
+    if not s:
+        return s
+    # Basic normalizations
+    s = s.strip()
+    s = s.replace("−", "-").replace("–", "-").replace("—", "-")
+    s = s.replace("×", "*").replace("⋅", "*").replace("^", "**")
+    s = s.replace(",", "")
+    # Remove weird characters often from OCR, keep common math symbols
+    s = re.sub(r"[^\w\s\*\+\-\/=\^\(\)\.\*\*]", "", s)  # keep letters, digits, underscore, whitespace and math symbols
 
-@app.route("/list_models", methods=["GET"])
-def http_list_models():
-    return jsonify(rest_list_models())
+    # Lowercase letters (SymPy can handle uppercase but normalizing helps)
+    # But preserve function names later by checking list (we use lowercase functions)
+    s = s.strip()
+
+    # Insert explicit multiplication between digit and letter: 3x -> 3*x
+    s = re.sub(r"(?<=\d)(?=[A-Za-z])", "*", s)
+    # Insert explicit multiplication between letter and digit: x2 -> x*2
+    s = re.sub(r"(?<=[A-Za-z])(?=\d)", "*", s)
+
+    # Insert multiplication between adjacent letters, but avoid common function names like sin, cos, tan, log, exp, sqrt
+    funcs = r"(sin|cos|tan|log|exp|sqrt|ln|sec|csc|cot|asin|acos|atan)"
+    # For letters sequence, insert * only when not part of function (negative lookbehind/lookahead)
+    # We'll replace boundary between letters where left/right are single letters or sequences not matching a function.
+    def insert_between_letters(match):
+        left = match.group(1)
+        right = match.group(2)
+        combined = (left + right).lower()
+        # if combined is starting a known function, don't insert (leave as function name)
+        if re.match(rf"^{funcs}", combined):
+            return left + right
+        # otherwise insert *
+        return left + "*" + right
+
+    # replace occurrences of letter-letter boundaries
+    s = re.sub(r"([A-Za-z])([A-Za-z])", insert_between_letters, s)
+
+    # remove spaces
+    s = s.replace(" ", "")
+    return s
 
 # -------------------------
-# Gemini REST: send image + prompt, request JSON in return
+# Gemini REST: normalize endpoint & model to avoid double slashes and duplicate 'models/' prefix
+# -------------------------
+def normalized_gemini_endpoint_and_model():
+    """
+    Returns (endpoint_base, model) normalized so we don't produce URLs like //models/models/...
+    - strips trailing slash from endpoint
+    - strips leading 'models/' from model if present
+    """
+    endpoint = GEMINI_ENDPOINT_BASE.rstrip("/")
+    model = (GEMINI_MODEL or "").strip()
+    if model.startswith("models/"):
+        model = model.split("/", 1)[1]
+    # also ensure model has no leading slash
+    model = model.lstrip("/")
+    return endpoint, model
+
+# -------------------------
+# Gemini REST: send image + prompt, request JSON in return (uses normalized values)
 # -------------------------
 def call_gemini_image_to_json_rest(image_b64: str, model: str = None, timeout: int = 30):
     """
     Call the Generative Language REST endpoint:
-    POST https://generativelanguage.googleapis.com/v1beta2/models/{model}:generate
+    POST {endpoint}/models/{model}:generate
     with a JSON body that contains a "prompt" / "input" using the image bytes.
-
-    The exact request shape tries to be compatible with the v1beta2 generate API.
     """
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured")
 
-    model_to_use = model or GEMINI_MODEL
-    url = f"{GEMINI_ENDPOINT_BASE}/models/{model_to_use}:generate"
+    endpoint, normalized_model = normalized_gemini_endpoint_and_model()
+    model_to_use = model or normalized_model
+    url = f"{endpoint}/models/{model_to_use}:generate"
 
     headers = {
         "Authorization": f"Bearer {GEMINI_API_KEY}",
         "Content-Type": "application/json; charset=utf-8",
     }
 
-    # Prompt text asking for strict JSON output
     prompt_text = (
         "You are a math assistant. Given the attached image, extract the mathematical equation in LaTeX "
         "(JSON key: latex) and provide a concise solution (JSON key: solution). "
         "Return ONLY a JSON object with keys: latex, solution and no additional commentary."
     )
 
-    # Build request body. The v1beta2 API accepts a 'prompt' or 'input' structure; we'll use 'prompt' shape
-    # with 'messages' style for safety. Include image as a content block with image bytes in base64.
     body = {
         "prompt": {
             "messages": [
@@ -209,20 +256,18 @@ def call_gemini_image_to_json_rest(image_b64: str, model: str = None, timeout: i
         resp.raise_for_status()
         data = resp.json()
     except requests.HTTPError as e:
-        # bubble up helpful message
-        raise RuntimeError(f"HTTP error from Gemini REST: {e} - {getattr(e.response, 'text', '')}")
+        # include response text for debugging
+        txt = getattr(e.response, "text", "")
+        raise RuntimeError(f"HTTP error from Gemini REST: {e} - {txt}")
     except Exception as e:
         raise RuntimeError(f"Error calling Gemini REST: {e}")
 
-    # Extract textual output - v1beta2 responses vary. Try common fields.
+    # Extract textual output - try several shapes
     text_output = ""
     try:
-        # Some responses include 'candidates' or 'output' or 'text'
         if isinstance(data, dict):
-            # candidates -> output -> content blocks
             if "candidates" in data and isinstance(data["candidates"], list) and len(data["candidates"]) > 0:
                 cand = data["candidates"][0]
-                # candidate may have 'content' which is list of blocks
                 if isinstance(cand, dict) and "content" in cand:
                     blocks = cand["content"]
                     parts = []
@@ -233,23 +278,19 @@ def call_gemini_image_to_json_rest(image_b64: str, model: str = None, timeout: i
                             parts.append(str(b))
                     text_output = "\n".join(parts).strip()
                 else:
-                    # fallback: stringify candidate
                     text_output = json.dumps(cand)
             elif "output" in data:
-                # older/alternative shapes
-                out = data["output"]
-                text_output = json.dumps(out)
+                text_output = json.dumps(data["output"])
             elif "results" in data:
                 text_output = json.dumps(data["results"])
             else:
-                # try top-level fields
                 text_output = json.dumps(data)
         else:
             text_output = str(data)
     except Exception:
         text_output = str(data)
 
-    # Try to parse JSON from the textual output
+    # Attempt to parse JSON from model output
     latex = ""
     solution = ""
     raw_json = None
@@ -259,7 +300,6 @@ def call_gemini_image_to_json_rest(image_b64: str, model: str = None, timeout: i
         latex = parsed.get("latex", "")
         solution = parsed.get("solution", "")
     except Exception:
-        # attempt to find JSON substring
         try:
             start = text_output.index("{")
             end = text_output.rindex("}") + 1
@@ -274,7 +314,7 @@ def call_gemini_image_to_json_rest(image_b64: str, model: str = None, timeout: i
     return {"latex": latex, "solution": solution, "raw_text": text_output, "raw_json": raw_json, "raw_response": data}
 
 # -------------------------
-# Fallback OCR + SymPy solver
+# Fallback OCR + SymPy solver (uses preprocessing)
 # -------------------------
 def fallback_ocr_and_sympy(pil_img):
     if not TESSERACT_PATH:
@@ -282,14 +322,15 @@ def fallback_ocr_and_sympy(pil_img):
 
     proc_img = preprocess_image_for_ocr(pil_img, resize_scale=2)
     ocr_text = pytesseract.image_to_string(proc_img, config="--psm 6").strip()
-    cleaned = ocr_text.replace("−", "-").replace("×", "*").replace("^", "**")
-    cleaned_nospace = cleaned.replace(" ", "")
 
-    latex = cleaned
+    # Preprocess text to make it SymPy-friendly
+    prepped = preprocess_text_for_sympy(ocr_text)
+    latex = ocr_text
     solution = ""
     try:
-        if "=" in cleaned_nospace:
-            lhs, rhs = cleaned_nospace.split("=", 1)
+        if "=" in prepped:
+            # split on = after preprocessing
+            lhs, rhs = prepped.split("=", 1)
             expr_l = sympify(lhs)
             expr_r = sympify(rhs)
             syms = list(expr_l.free_symbols.union(expr_r.free_symbols))
@@ -300,12 +341,12 @@ def fallback_ocr_and_sympy(pil_img):
             else:
                 solution = str(expr_l - expr_r)
         else:
-            expr = sympify(cleaned_nospace)
+            expr = sympify(prepped)
             solution = str(expr.simplify())
     except Exception as e:
-        solution = f"SymPy error: {e}"
+        solution = f"SymPy error: {e} (preprocessed='{prepped}')"
 
-    return {"latex": latex, "solution": solution, "ocr_text": ocr_text}
+    return {"latex": latex, "solution": solution, "ocr_text": ocr_text, "preprocessed": prepped}
 
 # -------------------------
 # Routes
@@ -317,6 +358,22 @@ def index():
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename):
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+@app.route("/list_models", methods=["GET"])
+def http_list_models():
+    """
+    Attempt to list models via REST. Useful for debugging which model IDs are available.
+    """
+    if not GEMINI_API_KEY:
+        return jsonify({"error": "GEMINI_API_KEY not set"})
+    url = f"{GEMINI_ENDPOINT_BASE}/models"
+    headers = {"Authorization": f"Bearer {GEMINI_API_KEY}"}
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        return jsonify(r.json())
+    except Exception as e:
+        return jsonify({"error": str(e), "status_code": getattr(e, "response", None)}), 500
 
 @app.route("/upload", methods=["POST"])
 def upload():
@@ -360,8 +417,7 @@ def upload():
             try:
                 image_b64 = image_to_base64_bytes(proc_img)
                 gemini_result = call_gemini_image_to_json_rest(image_b64, model=GEMINI_MODEL)
-                # if gemini_result contains latex or solution, accept it
-                if (gemini_result.get("latex") or gemini_result.get("solution")):
+                if gemini_result.get("latex") or gemini_result.get("solution"):
                     gemini_ok = True
                     record["latex"] = gemini_result.get("latex", "")
                     record["solution"] = gemini_result.get("solution", "")
@@ -377,6 +433,7 @@ def upload():
                 record["latex"] = fallback.get("latex", "")
                 record["solution"] = fallback.get("solution", "")
                 record["ocr_text"] = fallback.get("ocr_text", "")
+                record["preprocessed_text"] = fallback.get("preprocessed", "")
                 record["source"] = "fallback"
             except Exception as e:
                 print("[ERROR] Fallback failed:", repr(e))
