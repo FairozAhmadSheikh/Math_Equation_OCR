@@ -142,3 +142,44 @@ def call_gemini_extract_and_solve(image_b64: str):
         solution = text.strip()
 
     return {"latex": latex, "solution": solution, "raw": data}
+def fallback_ocr_and_sympy(path):
+    """
+    Fallback pipeline: use pytesseract to extract text, then attempt to sympify and solve.
+    This is best-effort and works well for simple algebraic equations.
+    """
+    im = Image.open(path).convert("L")
+    # Improve OCR with simple thresholding (optional)
+    # im = im.point(lambda p: p > 140 and 255)
+
+    ocr_text = pytesseract.image_to_string(im, config="--psm 6")
+    ocr_text = ocr_text.strip()
+
+    # Attempt to find an equation in the OCR text (simple heuristics)
+    # Replace unicode division signs, etc.
+    cleaned = ocr_text.replace("−", "-").replace("×", "*").replace("^", "**")
+    cleaned = cleaned.replace(" ", "")
+
+    latex = cleaned  # best effort (not actual LaTeX)
+    solution = ""
+    try:
+        # If string contains '=' try to solve for a variable, else try to evaluate/simplify
+        if "=" in cleaned:
+            lhs, rhs = cleaned.split("=", 1)
+            expr_l = sympify(lhs)
+            expr_r = sympify(rhs)
+            # attempt to solve symbolically; find symbols used
+            symbols = list(expr_l.free_symbols.union(expr_r.free_symbols))
+            if symbols:
+                var = symbols[0]
+                sol = solve(Eq(expr_l, expr_r), var)
+                solution = str(sol)
+            else:
+                solution = str(sympify(lhs - expr_r))
+        else:
+            # try to evaluate / simplify expression
+            expr = sympify(cleaned)
+            solution = str(expr.simplify())
+    except Exception as e:
+        solution = f"Could not solve with SymPy: {e}"
+
+    return {"latex": latex, "solution": solution, "ocr_text": ocr_text}
