@@ -1,0 +1,132 @@
+:root {
+  --bg: #0f1724;
+  --card: #0b1220aa;
+  --accent: #6ee7b7;
+  --muted: #aab4c0;
+  --glass: rgba(255, 255, 255, 0.04);
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial;
+  background: linear-gradient(180deg, #071022 0%, #0f1724 100%);
+  color: #e6eef8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.page {
+  width: 100%;
+  max-width: 900px;
+  padding: 1rem;
+}
+.card {
+  padding: 2rem;
+  border-radius: 14px;
+  backdrop-filter: blur(8px) saturate(120%);
+  box-shadow: 0 10px 30px rgba(2, 8, 23, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.02),
+    rgba(255, 255, 255, 0.01)
+  );
+}
+
+h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.6rem;
+}
+.muted {
+  color: var(--muted);
+  margin-bottom: 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1rem;
+}
+.field span {
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+  color: var(--muted);
+}
+input[type="text"],
+input[type="file"],
+input[type="email"],
+input[type="password"],
+textarea {
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  border: none;
+  background: var(--glass);
+  color: inherit;
+  outline: none;
+}
+.required {
+  color: #ff7a7a;
+  margin-left: 4px;
+}
+
+.controls {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+button {
+  background: linear-gradient(90deg, var(--accent), #4ade80);
+  border: none;
+  padding: 0.7rem 1rem;
+  border-radius: 10px;
+  font-weight: 600;
+  color: #052018;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(50, 200, 160, 0.12);
+}
+
+.status {
+  margin-top: 1rem;
+  color: var(--muted);
+}
+.result {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.history {
+  margin-top: 1rem;
+}
+
+.result pre {
+  white-space: pre-wrap;
+  color: #dfffe6;
+}
+.small {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+@media (max-width: 600px) {
+  .card {
+    padding: 1rem;
+  }
+  h1 {
+    font-size: 1.25rem;
+  }
+}
