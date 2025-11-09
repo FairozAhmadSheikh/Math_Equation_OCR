@@ -266,3 +266,14 @@ def upload():
         print("Fallback error:", e)
         return jsonify({"error": "Failed to process image"}), 500
 
+@app.route("/history", methods=["GET"])
+def history():
+    results = []
+    for doc in collection.find().sort("createdAt", -1).limit(100):
+        doc["_id"] = str(doc["_id"])
+        results.append(doc)
+    return jsonify(results)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
