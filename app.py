@@ -20,3 +20,13 @@ load_dotenv()
 UPLOAD_FOLDER = "uploads"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16 MB
+
+app = Flask(__name__, static_folder="static", template_folder="templates")
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
+
+# MongoDB setup
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+mongo_client = MongoClient(MONGO_URI)
+db = mongo_client["mathvision"]
+collection = db["equations"]
