@@ -59,3 +59,86 @@ def image_to_base64(path):
     with open(path, "rb") as f:
         data = f.read()
     return base64.b64encode(data).decode("utf-8")
+
+
+def call_gemini_extract_and_solve(image_b64: str):
+    """
+    Example template to call Gemini. Exact request shape may need adjustment
+    depending on the Gemini API version you have access to.
+
+    This function attempts to POST to an endpoint with API key in header.
+    If your Gemini endpoint or model naming differs, update GEMINI_ENDPOINT / GEMINI_MODEL.
+    """
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY not set")
+
+    # Build a prompt: ask Gemini to return a JSON with fields `latex` and `solution`.
+    prompt_text = (
+        "You are a math assistant. Given the image attached, extract the mathematical "
+        "equation in LaTeX format (key: latex) and solve it (key: solution). "
+        "Return ONLY a JSON object with keys: latex, solution. Do not add extra text."
+    )
+
+    # NOTE: The exact JSON below is a template. Modify according to the Gemini API you're using.
+    # Many Gemini endpoints accept a `prompt` and `image` or multimodal content; if yours differs,
+    # adapt the payload accordingly.
+    url = f"{GEMINI_ENDPOINT}models/{GEMINI_MODEL}:generate"
+
+    headers = {
+        "Authorization": f"Bearer {GEMINI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "prompt": {
+            "text": prompt_text,
+            # If the API supports including images as base64 in the request structure, include it here.
+            # Some Google endpoints accept multimodal content blocks; adjust to your model's API.
+            "image_base64": image_b64
+        },
+        # optional parameters you might have access to:
+        "maxOutputTokens": 1024,
+        "temperature": 0.0
+    }
+
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+
+    # The response shape depends on your Gemini model. Attempt a couple of common places to read text.
+    # Adapt these fields if your response is different.
+    text = None
+    if isinstance(data, dict):
+        # Try some likely fields
+        if "candidates" in data and isinstance(data["candidates"], list) and len(data["candidates"]) > 0:
+            # some endpoints return text in candidates[0]["content"]
+            cand = data["candidates"][0]
+            text = cand.get("content") or cand.get("text") or cand.get("output")
+        if not text and "outputs" in data and isinstance(data["outputs"], list):
+            # other endpoints return outputs[0].content
+            out = data["outputs"][0]
+            # a nested structure may exist
+            if isinstance(out, dict):
+                # attempt to flatten
+                text = json.dumps(out)
+            else:
+                text = str(out)
+
+    if not text:
+        # Last attempt: try top-level "text" or "content"
+        text = data.get("text") or data.get("content") or ""
+
+    # Try to parse JSON out of the returned text
+    latex = ""
+    solution = ""
+    try:
+        # Sometimes the model returns inline JSON; try to find it
+        parsed = json.loads(text)
+        latex = parsed.get("latex", "")
+        solution = parsed.get("solution", "")
+    except Exception:
+        # If not valid JSON, as a fallback, just return the raw text for inspection
+        latex = ""
+        solution = text.strip()
+
+    return {"latex": latex, "solution": solution, "raw": data}
