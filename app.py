@@ -12,3 +12,11 @@ from PIL import Image
 import pytesseract
 from sympy import sympify, Eq, solve, Symbol
 import requests
+
+# Load environment variables
+load_dotenv()
+
+# Config
+UPLOAD_FOLDER = "uploads"
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
+MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16 MB
