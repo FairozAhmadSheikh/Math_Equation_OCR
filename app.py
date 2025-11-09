@@ -183,3 +183,86 @@ def fallback_ocr_and_sympy(path):
         solution = f"Could not solve with SymPy: {e}"
 
     return {"latex": latex, "solution": solution, "ocr_text": ocr_text}
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/uploads/<filename>")
+def uploaded_file(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    """
+    Handle the form:
+      - required field: name
+      - required: file (image)
+    """
+    name = request.form.get("name", "").strip()
+    if not name:
+        return jsonify({"error": "Name is required."}), 400
+
+    if "image" not in request.files:
+        return jsonify({"error": "Image file missing."}), 400
+
+    file = request.files["image"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file."}), 400
+    if not allowed_file(file.filename):
+        return jsonify({"error": "File type not allowed."}), 400
+
+    filename, path = save_file(file)
+    record = {
+        "name": name,
+        "filename": filename,
+        "createdAt": datetime.utcnow()
+    }
+
+    # Try Gemini first if key provided
+    gemini_result = None
+    try:
+        if GEMINI_API_KEY:
+            image_b64 = image_to_base64(path)
+            gemini_result = call_gemini_extract_and_solve(image_b64)
+            # If gemini_result returns solution/latex, use them
+            if gemini_result and (gemini_result.get("latex") or gemini_result.get("solution")):
+                record["latex"] = gemini_result.get("latex", "")
+                record["solution"] = gemini_result.get("solution", "")
+                record["raw_gemini"] = gemini_result.get("raw")
+                inserted_id = collection.insert_one(record).inserted_id
+                return jsonify({
+                    "id": str(inserted_id),
+                    "name": name,
+                    "filename": filename,
+                    "latex": record["latex"],
+                    "solution": record["solution"],
+                    "source": "gemini"
+                })
+            # else fall through to fallback
+    except Exception as e:
+        # Log but don't crash — use fallback
+        print("Gemini error:", e)
+
+    # Fallback: local OCR (Tesseract) + SymPy
+    try:
+        fallback = fallback_ocr_and_sympy(path)
+        record["latex"] = fallback.get("latex", "")
+        record["solution"] = fallback.get("solution", "")
+        record["ocr_text"] = fallback.get("ocr_text", "")
+        record["source"] = "fallback"
+        inserted_id = collection.insert_one(record).inserted_id
+        return jsonify({
+            "id": str(inserted_id),
+            "name": name,
+            "filename": filename,
+            "latex": record["latex"],
+            "solution": record["solution"],
+            "source": "fallback"
+        })
+    except Exception as e:
+        print("Fallback error:", e)
+        return jsonify({"error": "Failed to process image"}), 500
+
