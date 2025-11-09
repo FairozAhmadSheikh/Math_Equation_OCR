@@ -39,3 +39,6 @@ GEMINI_ENDPOINT = os.getenv(
     "GEMINI_ENDPOINT",
     "https://generativelanguage.googleapis.com/v1beta2/"  # placeholder prefix
 )
+
+# Ensure upload folder exists
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
