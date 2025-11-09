@@ -42,3 +42,15 @@ GEMINI_ENDPOINT = os.getenv(
 
 # Ensure upload folder exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def save_file(file_storage):
+    filename = secure_filename(file_storage.filename)
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    filename = f"{timestamp}_{filename}"
+    path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    file_storage.save(path)
+    return filename, path
