@@ -30,3 +30,12 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["mathvision"]
 collection = db["equations"]
+
+# Gemini config (optional)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # set this to use Gemini
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-1.5-mini")  # change as needed
+# Example endpoint template — you may need to adjust depending on your access & region
+GEMINI_ENDPOINT = os.getenv(
+    "GEMINI_ENDPOINT",
+    "https://generativelanguage.googleapis.com/v1beta2/"  # placeholder prefix
+)
