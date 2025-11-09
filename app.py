@@ -1,4 +1,4 @@
-# app.py — Complete updated Flask app (Gemini image + fallback + preprocessing + model listing)
+# app.py — REST-based Gemini calls + fallback OCR+SymPy (complete file)
 import os
 import io
 import json
@@ -16,7 +16,7 @@ from PIL import Image, ImageFilter, ImageOps
 
 import pytesseract
 from sympy import sympify, Eq, solve
-import google.generativeai as genai
+import requests
 
 # -------------------------
 # Load env
@@ -31,8 +31,9 @@ ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")            # required to use Gemini
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")            # required to use Gemini REST
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-mini")  # set to an available model ID
+GEMINI_ENDPOINT_BASE = os.getenv("GEMINI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta2")
 PORT = int(os.getenv("PORT", 5000))
 
 # -------------------------
@@ -47,12 +48,6 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["mathvision"]
 collection = db["equations"]
-
-# -------------------------
-# Configure Gemini SDK (if key present)
-# -------------------------
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 # -------------------------
 # Tesseract detection/config
@@ -92,7 +87,6 @@ def check_and_configure_tesseract():
     try:
         pytesseract.pytesseract.tesseract_cmd = tpath
     except Exception:
-        # fallback attribute
         try:
             pytesseract.tesseract_cmd = tpath
         except Exception:
@@ -150,89 +144,112 @@ def preprocess_image_for_ocr(pil_img, resize_scale=2, median_filter=3, autocontr
     return img
 
 # -------------------------
-# Gemini: list models helper (best-effort; SDK shapes vary)
+# Gemini REST: list models helper
 # -------------------------
-def list_gemini_models():
+def rest_list_models():
     if not GEMINI_API_KEY:
         return {"error": "GEMINI_API_KEY not set"}
+    url = f"{GEMINI_ENDPOINT_BASE}/models"
+    headers = {"Authorization": f"Bearer {GEMINI_API_KEY}"}
     try:
-        # Try SDK helper
-        if hasattr(genai, "list_models"):
-            models = genai.list_models()
-            return {"models": models}
-        # Some SDKs expose models.list or genai.models.list()
-        if hasattr(genai, "models") and hasattr(genai.models, "list"):
-            models = genai.models.list()
-            return {"models": models}
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        return r.json()
     except Exception as e:
-        return {"error": str(e)}
-    return {"error": "Could not list models via SDK; check AI Studio web UI."}
+        return {"error": str(e), "status_code": getattr(e.response, "status_code", None)}
 
-# Expose a simple route to list available models (handy for debugging)
 @app.route("/list_models", methods=["GET"])
 def http_list_models():
-    res = list_gemini_models()
-    return jsonify(res)
+    return jsonify(rest_list_models())
 
 # -------------------------
-# Gemini: send image + prompt, request JSON in return
+# Gemini REST: send image + prompt, request JSON in return
 # -------------------------
-def call_gemini_image_to_json(image_b64: str, model: str = None, timeout: int = 30):
+def call_gemini_image_to_json_rest(image_b64: str, model: str = None, timeout: int = 30):
     """
-    Uses google-generativeai SDK models.generate_content to send a prompt + image.
-    Tries to parse a JSON response (with keys latex, solution). Returns dict.
+    Call the Generative Language REST endpoint:
+    POST https://generativelanguage.googleapis.com/v1beta2/models/{model}:generate
+    with a JSON body that contains a "prompt" / "input" using the image bytes.
+
+    The exact request shape tries to be compatible with the v1beta2 generate API.
     """
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured")
 
     model_to_use = model or GEMINI_MODEL
+    url = f"{GEMINI_ENDPOINT_BASE}/models/{model_to_use}:generate"
 
+    headers = {
+        "Authorization": f"Bearer {GEMINI_API_KEY}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+
+    # Prompt text asking for strict JSON output
     prompt_text = (
         "You are a math assistant. Given the attached image, extract the mathematical equation in LaTeX "
-        "(JSON key: latex) and provide a concise solution (JSON key: solution)."
-        " Return ONLY a JSON object with keys: latex, solution and no additional commentary."
+        "(JSON key: latex) and provide a concise solution (JSON key: solution). "
+        "Return ONLY a JSON object with keys: latex, solution and no additional commentary."
     )
 
-    try:
-        response = genai.models.generate_content(
-            model=model_to_use,
-            content=[
-                {"type": "text", "text": prompt_text},
-                {"type": "image", "image_base64": image_b64}
-            ],
-            temperature=0.0,
-            max_output_tokens=1024,
-        )
-    except Exception as e:
-        raise
+    # Build request body. The v1beta2 API accepts a 'prompt' or 'input' structure; we'll use 'prompt' shape
+    # with 'messages' style for safety. Include image as a content block with image bytes in base64.
+    body = {
+        "prompt": {
+            "messages": [
+                {"author": "user", "content": [{"type": "text", "text": prompt_text},
+                                               {"type": "image", "image": {"imageBytes": image_b64}}]}
+            ]
+        },
+        "temperature": 0.0,
+        "maxOutputTokens": 1024
+    }
 
-    # Extract text blocks — SDK response shapes vary; try multiple fallbacks
+    try:
+        resp = requests.post(url, headers=headers, json=body, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.HTTPError as e:
+        # bubble up helpful message
+        raise RuntimeError(f"HTTP error from Gemini REST: {e} - {getattr(e.response, 'text', '')}")
+    except Exception as e:
+        raise RuntimeError(f"Error calling Gemini REST: {e}")
+
+    # Extract textual output - v1beta2 responses vary. Try common fields.
     text_output = ""
     try:
-        # Many SDKs return response.candidates[0].content which is a list of blocks
-        if getattr(response, "candidates", None):
-            candidate = response.candidates[0]
-            blocks = getattr(candidate, "content", [])
-            parts = []
-            for b in blocks:
-                # block may be dict or object
-                if isinstance(b, dict):
-                    if "text" in b:
-                        parts.append(b["text"])
+        # Some responses include 'candidates' or 'output' or 'text'
+        if isinstance(data, dict):
+            # candidates -> output -> content blocks
+            if "candidates" in data and isinstance(data["candidates"], list) and len(data["candidates"]) > 0:
+                cand = data["candidates"][0]
+                # candidate may have 'content' which is list of blocks
+                if isinstance(cand, dict) and "content" in cand:
+                    blocks = cand["content"]
+                    parts = []
+                    for b in blocks:
+                        if isinstance(b, dict) and "text" in b:
+                            parts.append(b["text"])
+                        else:
+                            parts.append(str(b))
+                    text_output = "\n".join(parts).strip()
                 else:
-                    t = getattr(b, "text", None)
-                    if t:
-                        parts.append(t)
-                    else:
-                        parts.append(str(b))
-            text_output = "\n".join(parts).strip()
+                    # fallback: stringify candidate
+                    text_output = json.dumps(cand)
+            elif "output" in data:
+                # older/alternative shapes
+                out = data["output"]
+                text_output = json.dumps(out)
+            elif "results" in data:
+                text_output = json.dumps(data["results"])
+            else:
+                # try top-level fields
+                text_output = json.dumps(data)
         else:
-            # fallback to string form of response
-            text_output = str(response)
+            text_output = str(data)
     except Exception:
-        text_output = str(response)
+        text_output = str(data)
 
-    # Try parsing JSON directly
+    # Try to parse JSON from the textual output
     latex = ""
     solution = ""
     raw_json = None
@@ -242,7 +259,7 @@ def call_gemini_image_to_json(image_b64: str, model: str = None, timeout: int = 
         latex = parsed.get("latex", "")
         solution = parsed.get("solution", "")
     except Exception:
-        # try to find a JSON substring
+        # attempt to find JSON substring
         try:
             start = text_output.index("{")
             end = text_output.rindex("}") + 1
@@ -252,10 +269,9 @@ def call_gemini_image_to_json(image_b64: str, model: str = None, timeout: int = 
             latex = parsed.get("latex", "")
             solution = parsed.get("solution", "")
         except Exception:
-            # no JSON found — set solution to entire text for inspection
             solution = text_output
 
-    return {"latex": latex, "solution": solution, "raw_text": text_output, "raw_json": raw_json, "raw_response": str(response)}
+    return {"latex": latex, "solution": solution, "raw_text": text_output, "raw_json": raw_json, "raw_response": data}
 
 # -------------------------
 # Fallback OCR + SymPy solver
@@ -276,7 +292,6 @@ def fallback_ocr_and_sympy(pil_img):
             lhs, rhs = cleaned_nospace.split("=", 1)
             expr_l = sympify(lhs)
             expr_r = sympify(rhs)
-            # attempt to solve for first symbol found
             syms = list(expr_l.free_symbols.union(expr_r.free_symbols))
             if syms:
                 var = syms[0]
@@ -338,13 +353,13 @@ def upload():
             "source": None
         }
 
-        # First: try Gemini (image -> JSON)
+        # First: try Gemini REST (image -> JSON)
         gemini_ok = False
         gemini_result = None
         if GEMINI_API_KEY:
             try:
                 image_b64 = image_to_base64_bytes(proc_img)
-                gemini_result = call_gemini_image_to_json(image_b64, model=GEMINI_MODEL)
+                gemini_result = call_gemini_image_to_json_rest(image_b64, model=GEMINI_MODEL)
                 # if gemini_result contains latex or solution, accept it
                 if (gemini_result.get("latex") or gemini_result.get("solution")):
                     gemini_ok = True
@@ -353,7 +368,6 @@ def upload():
                     record["raw_gemini_text"] = gemini_result.get("raw_text", "")
                     record["source"] = "gemini"
             except Exception as e:
-                # log and fall through to fallback
                 print("[ERROR] Gemini call failed:", repr(e))
 
         # If Gemini not available or didn't provide results: fallback to Tesseract+SymPy
@@ -390,7 +404,6 @@ def history():
     docs = []
     for doc in collection.find().sort("createdAt", -1).limit(200):
         doc["_id"] = str(doc["_id"])
-        # convert datetime to iso string if present
         if isinstance(doc.get("createdAt"), datetime):
             doc["createdAt"] = doc["createdAt"].isoformat()
         docs.append(doc)
