@@ -81,3 +81,22 @@ def locate_tesseract_executable():
         if os.path.isfile(p):
             return p
     return None
+
+def check_and_configure_tesseract():
+    tpath = locate_tesseract_executable()
+    if not tpath:
+        return None
+    try:
+        pytesseract.pytesseract.tesseract_cmd = tpath
+    except Exception:
+        try:
+            pytesseract.tesseract_cmd = tpath
+        except Exception:
+            pass
+    try:
+        proc = subprocess.run([tpath, "--version"], capture_output=True, text=True, timeout=5)
+        if proc.returncode == 0:
+            return tpath
+    except Exception:
+        pass
+    return None
