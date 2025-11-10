@@ -24,3 +24,18 @@ try:
     HAVE_LATEX2SYMPY2 = True
 except Exception:
     HAVE_LATEX2SYMPY2 = False
+    
+# Pix2Tex import attempts (API surface varies with versions)
+PIX2TEX_AVAILABLE = False
+LatexOCR = None
+try:
+    from pix2tex.cli import LatexOCR as _LatexOCR
+    LatexOCR = _LatexOCR
+    PIX2TEX_AVAILABLE = True
+except Exception:
+    try:
+        from pix2tex import LatexOCR as _LatexOCR
+        LatexOCR = _LatexOCR
+        PIX2TEX_AVAILABLE = True
+    except Exception:
+        PIX2TEX_AVAILABLE = False
