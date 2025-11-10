@@ -7,6 +7,8 @@ const historyBtn = document.getElementById("historyBtn");
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   status.textContent = "Uploading...";
+  resultDiv.innerHTML = "";
+  historyDiv.innerHTML = "";
 
   const data = new FormData(form);
   const btn = document.getElementById("submitBtn");
@@ -17,24 +19,21 @@ form.addEventListener("submit", async (e) => {
     const json = await res.json();
     if (!res.ok) {
       status.textContent = json.error || "Upload failed";
-      resultDiv.innerHTML = "";
       btn.disabled = false;
       return;
     }
 
     status.textContent = `Saved. Source: ${json.source}`;
-    const out = `
+    resultDiv.innerHTML = `
       <div class="small">Name: <strong>${json.name}</strong></div>
       <div class="small">Filename: <a href="/uploads/${json.filename}" target="_blank">${json.filename}</a></div>
-      <h3>Recognized (best-effort):</h3>
+      <h3>Recognized (LaTeX or text):</h3>
       <pre>${json.latex || "(none)"}</pre>
       <h3>Solution:</h3>
       <pre>${json.solution || "(none)"}</pre>
     `;
-    resultDiv.innerHTML = out;
   } catch (err) {
     status.textContent = "Request failed";
-    resultDiv.innerHTML = "";
     console.error(err);
   } finally {
     btn.disabled = false;
@@ -54,7 +53,7 @@ historyBtn.addEventListener("click", async () => {
       return `<div class="result small">
         <div><strong>${doc.name}</strong> — ${new Date(doc.createdAt).toLocaleString()}</div>
         <div>File: <a href="/uploads/${doc.filename}" target="_blank">${doc.filename}</a></div>
-        <div>Latex: <pre>${doc.latex || "(none)"}</pre></div>
+        <div>Latex/Text: <pre>${doc.latex || "(none)"}</pre></div>
         <div>Solution: <pre>${doc.solution || "(none)"}</pre></div>
       </div>`;
     }).join("");
