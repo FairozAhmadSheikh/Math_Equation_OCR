@@ -39,3 +39,12 @@ except Exception:
         PIX2TEX_AVAILABLE = True
     except Exception:
         PIX2TEX_AVAILABLE = False
+# Load .env
+
+load_dotenv()
+UPLOAD_FOLDER = "uploads"
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
+MAX_CONTENT_LENGTH = 16 * 1024 * 1024
+
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+PORT = int(os.getenv("PORT", 5000))
