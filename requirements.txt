@@ -1,6 +1,5 @@
-flask
-pymongo
-python-dotenv
-pytesseract
+requests
 sympy
-google-generativeai
+pillow
+pytesseract
+latex2sympy2    # optional, improves LaTeX -> SymPy conversion (pip install latex2sympy2)
