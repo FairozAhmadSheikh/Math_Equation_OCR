@@ -58,3 +58,26 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["mathvision"]
 collection = db["equations"]
+
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("mathvision")
+
+# Tesseract detection/config (fallback)
+def locate_tesseract_executable():
+    which_path = shutil.which("tesseract")
+    if which_path:
+        return which_path
+    if platform.system().lower().startswith("win"):
+        common_paths = [
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            r"C:\Tesseract-OCR\tesseract.exe",
+        ]
+        for p in common_paths:
+            if os.path.isfile(p):
+                return p
+    for p in ["/usr/local/bin/tesseract", "/opt/homebrew/bin/tesseract", "/usr/bin/tesseract"]:
+        if os.path.isfile(p):
+            return p
+    return None
