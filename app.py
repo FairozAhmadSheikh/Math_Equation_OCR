@@ -136,3 +136,27 @@ def image_to_base64_bytes(pil_image):
     buf = io.BytesIO()
     pil_image.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+# Preprocess OCR text -> SymPy-friendly
+
+def preprocess_text_for_sympy(s: str) -> str:
+    if not s:
+        return s
+    s = s.strip()
+    s = s.replace("−", "-").replace("–", "-").replace("—", "-")
+    s = s.replace("×", "*").replace("⋅", "*").replace("^", "**")
+    s = s.replace(",", "")
+    s = re.sub(r"[^\w\*\+\-\/=\^\(\)\.\*]", " ", s)
+    s = s.strip()
+    s = re.sub(r"(?<=\d)(?=[A-Za-z])", "*", s)
+    s = re.sub(r"(?<=[A-Za-z])(?=\d)", "*", s)
+    funcs = r"(sin|cos|tan|log|exp|sqrt|ln|sec|csc|cot|asin|acos|atan)"
+    def insert_between_letters(match):
+        left, right = match.group(1), match.group(2)
+        comb = (left + right).lower()
+        if re.match(rf"^{funcs}", comb):
+            return left + right
+        return left + "*" + right
+    s = re.sub(r"([A-Za-z])([A-Za-z])", insert_between_letters, s)
+    s = s.replace(" ", "")
+    return s
