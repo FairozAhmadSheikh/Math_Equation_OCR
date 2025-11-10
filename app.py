@@ -100,3 +100,39 @@ def check_and_configure_tesseract():
     except Exception:
         pass
     return None
+
+TESSERACT_PATH = check_and_configure_tesseract()
+if TESSERACT_PATH:
+    logger.info(f"Tesseract configured: {TESSERACT_PATH}")
+else:
+    logger.info("Tesseract not found (fallback will be unavailable until installed).")
+
+# -------------------------
+# Helpers: files & images
+# -------------------------
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def save_file(storage):
+    filename = secure_filename(storage.filename)
+    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    filename = f"{ts}_{filename}"
+    path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    storage.save(path)
+    return filename, path
+
+def preprocess_image_for_ocr(pil_img, resize_scale=2, median_filter=3, autocontrast=True):
+    img = pil_img.convert("L")
+    if resize_scale and resize_scale > 1:
+        w, h = img.size
+        img = img.resize((w * resize_scale, h * resize_scale), Image.LANCZOS)
+    if median_filter and median_filter > 0:
+        img = img.filter(ImageFilter.MedianFilter(size=median_filter))
+    if autocontrast:
+        img = ImageOps.autocontrast(img)
+    return img
+
+def image_to_base64_bytes(pil_image):
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
