@@ -351,3 +351,8 @@ def history():
             doc["createdAt"] = doc["createdAt"].isoformat()
         docs.append(doc)
     return jsonify(docs)
+
+if __name__ == "__main__":
+    logger.info("Starting MathVision (Pix2Tex) app...")
+    logger.info("PIX2TEX_AVAILABLE=%s, TESSERACT_PATH=%s", PIX2TEX_AVAILABLE, TESSERACT_PATH)
+    app.run(host="0.0.0.0", port=PORT, debug=True)

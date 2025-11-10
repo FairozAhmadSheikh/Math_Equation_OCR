@@ -1,5 +1,9 @@
-requests
-sympy
+flask
+pymongo
+python-dotenv
 pillow
 pytesseract
-latex2sympy2    # optional, improves LaTeX -> SymPy conversion (pip install latex2sympy2)
+sympy
+pix2tex
+latex2sympy2
+requests
