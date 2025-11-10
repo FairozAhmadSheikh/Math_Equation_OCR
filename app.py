@@ -48,3 +48,13 @@ MAX_CONTENT_LENGTH = 16 * 1024 * 1024
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 PORT = int(os.getenv("PORT", 5000))
+
+# App + DB
+app = Flask(__name__, static_folder="static", template_folder="templates")
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+mongo_client = MongoClient(MONGO_URI)
+db = mongo_client["mathvision"]
+collection = db["equations"]
